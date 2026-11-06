@@ -293,7 +293,7 @@ function calcSummary(S,groupId){
     const it=itemById[l.item_id]; if(!it) return;
     const r=byItem[l.item_id]=byItem[l.item_id]||{id:l.item_id,name:it.name,unit:it.unit,qty:0,amount:0,cost:0};
     r.qty+=l.qty; r.amount+=l.qty*Number(it.price);
-    r.cost+=l.qty*(it.counts_capacity?packCost(l.item_id,S):0);
+    r.cost+=l.qty*packCost(l.item_id,S);
   });
   const rows=Object.keys(byItem).map(k=>byItem[k]).sort((a,b)=>b.amount-a.amount);
 
@@ -786,7 +786,7 @@ function viewRecipe(){
      '<div class="scroll"><table><thead><tr><th>品項</th><th>單位</th><th class="num">售價</th>'+
      '<th class="num">每包成本</th><th class="num">毛利率</th><th>進生產排程</th><th></th></tr></thead><tbody>';
   S.items.filter(i=>i.active).forEach(it=>{
-    const c=it.counts_capacity?packCost(it.id,S):0;
+    const c=packCost(it.id,S);
     h+='<tr><td>'+esc(it.name)+'</td><td>'+esc(it.unit)+'</td>'+
       '<td class="num">'+fmtMoney(it.price)+'</td>'+
       '<td class="num">'+(c>0?fmtMoney(c):'—')+'</td>'+
@@ -811,28 +811,66 @@ function viewRecipe(){
     '<button class="btn sm plain" onclick="delMaterial(\''+m.id+'\')">刪除</button></td></tr>');
   h+='</tbody></table></div></div>';
 
-  const prodItems=S.items.filter(i=>i.active&&i.counts_capacity);
-  h+='<div class="card"><h2>📖 配方<span class="sub">每「一包」需要的原料，改完立即生效</span></h2>';
-  if(!prodItems.length||!S.materials.length) h+='<div class="empty">請先新增品項與原料。</div>';
+  // 配方依品項分開，每張卡片只列這個品項用到的原料，並算出每單位成本與毛利
+  const active=S.items.filter(i=>i.active);
+  const sections=[['🥟 水餃配方','每「一包」需要的原料',active.filter(i=>i.counts_capacity)],
+    ['🫙 醬料／外購品配方','每「一罐」（或一個販售單位）需要的原料',active.filter(i=>!i.counts_capacity)]];
+  sections.forEach(([title,sub,list])=>{
+    if(!list.length) return;
+    h+='<div class="card"><h2>'+title+'<span class="sub">'+sub+'，改完立即生效</span></h2>';
+    if(!S.materials.length) h+='<div class="empty">請先新增原料。</div>';
+    else h+='<div class="grid c2">'+list.map(recipeCard).join('')+'</div>';
+    h+='</div>';
+  });
+  h+='<div class="card"><h2>🔧 資料</h2>'+
+     '<button class="btn ghost" onclick="reload()">重新整理</button></div>';
+  return h;
+}
+
+function recipeCard(it){
+  const matById={}; S.materials.forEach(m=>matById[m.id]=m);
+  const rows=S.recipes.filter(r=>r.item_id===it.id&&matById[r.material_id])
+    .sort((a,b)=>(matById[a.material_id].sort_order||0)-(matById[b.material_id].sort_order||0));
+  const cost=packCost(it.id,S);
+  let h='<div style="border:1px solid var(--border);border-radius:10px;padding:12px">'+
+    '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:8px">'+
+    '<b style="font-size:15px">'+esc(it.name)+'</b>'+
+    '<span style="color:var(--muted);font-size:12px">售價 '+fmtMoney(it.price)+' / '+esc(it.unit)+'</span></div>';
+  if(!rows.length) h+='<div class="empty" style="padding:10px 0">還沒有設定配方，從下面加入原料。</div>';
   else{
-    h+='<div class="scroll"><table><thead><tr><th style="min-width:150px">品項</th>';
-    S.materials.forEach(m=>h+='<th class="num">'+esc(m.name)+
-      '<div style="font-weight:400">('+esc(m.unit)+')</div></th>');
-    h+='</tr></thead><tbody>';
-    prodItems.forEach(it=>{
-      h+='<tr><td>'+esc(it.name)+'</td>';
-      S.materials.forEach(m=>{
-        const r=S.recipes.filter(x=>x.item_id===it.id&&x.material_id===m.id)[0];
-        h+='<td class="num"><input class="qty" type="number" min="0" step="1" value="'+
-          (r?Number(r.qty_per_pack):0)+'" onchange="saveRecipe(\''+it.id+'\',\''+m.id+'\',this.value)"></td>';
-      });
-      h+='</tr>';
+    h+='<div class="scroll"><table><thead><tr><th>原料</th><th class="num">用量</th>'+
+      '<th class="num">單價</th><th class="num">小計</th><th></th></tr></thead><tbody>';
+    rows.forEach(r=>{
+      const m=matById[r.material_id], line=Number(r.qty_per_pack)*Number(m.unit_cost||0);
+      h+='<tr><td>'+esc(m.name)+'</td>'+
+        '<td class="num" style="white-space:nowrap"><input class="qty" style="width:64px" type="number" min="0" step="any" value="'+
+        Number(r.qty_per_pack)+'" onchange="saveRecipe(\''+it.id+'\',\''+m.id+'\',this.value)"> '+esc(m.unit)+'</td>'+
+        '<td class="num" style="white-space:nowrap">'+(Number(m.unit_cost)?Number(m.unit_cost).toFixed(2)+'/'+esc(m.unit):'<span class="pill warn">未填</span>')+'</td>'+
+        '<td class="num" style="white-space:nowrap">'+fmtMoney(line)+'</td>'+
+        '<td><button class="btn sm plain" title="從配方移除" onclick="saveRecipe(\''+it.id+'\',\''+m.id+'\',0)">✕</button></td></tr>';
     });
     h+='</tbody></table></div>';
   }
-  h+='</div><div class="card"><h2>🔧 資料</h2>'+
-     '<button class="btn ghost" onclick="reload()">重新整理</button></div>';
-  return h;
+  const unused=S.materials.filter(m=>!rows.some(r=>r.material_id===m.id));
+  if(unused.length){
+    h+='<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'+
+      '<select id="addMat_'+it.id+'">'+unused.map(m=>'<option value="'+m.id+'">'+esc(m.name)+'（'+esc(m.unit)+'）</option>').join('')+'</select>'+
+      '<input class="qty" id="addQty_'+it.id+'" type="number" min="0" step="any" placeholder="用量">'+
+      '<button class="btn sm ghost" onclick="addRecipeLine(\''+it.id+'\')">＋ 加入原料</button></div>';
+  }
+  const missing=rows.some(r=>!Number(matById[r.material_id].unit_cost));
+  h+='<div style="display:flex;justify-content:space-between;margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">'+
+    '<span>每'+esc(it.unit)+'原料成本 <b>'+(cost>0?fmtMoney(cost):'—')+'</b></span>'+
+    '<span>毛利 <b>'+(cost>0?fmtMoney(it.price-cost)+'（'+pct(it.price-cost,it.price)+'%）':'—')+'</b></span></div>';
+  if(missing) h+='<div style="font-size:12px;color:var(--warn);margin-top:4px">有原料還沒填單價，成本會偏低。到上方「原料」編輯單價。</div>';
+  return h+'</div>';
+}
+
+function addRecipeLine(itemId){
+  const mat=document.getElementById('addMat_'+itemId).value;
+  const qty=Number(document.getElementById('addQty_'+itemId).value);
+  if(!(qty>0)){ toast('請輸入用量',true); return; }
+  saveRecipe(itemId,mat,qty);
 }
 
 /* ---------- 團次 ---------- */
