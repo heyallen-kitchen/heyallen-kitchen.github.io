@@ -200,6 +200,10 @@
   .closed-head { text-align: center; padding: 24px 16px 8px; }
   .closed-head .emoji { font-size: 40px; }
   .closed-head .msg { font-size: 16px; margin-top: 8px; }
+  .line-btn { display:block; text-align:center; background:#06c755; color:#fff; text-decoration:none; font-weight:700; font-size:16px; padding:14px; border-radius:12px; margin:16px 0 6px; }
+  .line-btn:active { background:#05a948; }
+  .line-sub { font-size:13px; color:var(--muted); text-align:center; }
+  .line-link { display:inline-block; margin-top:10px; font-size:13px; color:#06a64a; font-weight:600; text-decoration:none; }
 </style>
 </head>
 <body>
@@ -212,6 +216,8 @@
   <div class="card closed-head">
     <div class="emoji">🙏</div>
     <div class="msg"><span data-html="closedHtml"></span></div>
+    <a class="line-btn" href="https://line.me/R/ti/p/@448vieqh" target="_blank" rel="noopener">💚 加入官方 LINE，開團第一時間通知</a>
+    <div class="line-sub">也可以在下方留資料登記候補</div>
   </div>
 
   <div id="waitlistSection">
@@ -257,6 +263,7 @@
     <!-- 1. 開場介紹 -->
     <div class="card">
       <div class="intro"><span data-html="introHtml"></span></div>
+      <a class="line-link" href="https://line.me/R/ti/p/@448vieqh" target="_blank" rel="noopener">💬 有問題歡迎加 LINE 詢問 @448vieqh</a>
     </div>
 
     <div class="error-box" id="errorBox"></div>
@@ -337,6 +344,8 @@
       <div class="result-line" id="resultPacks"></div>
       <div class="result-line" id="resultPrice"></div>
       <div class="result-line" id="resultShipping"></div>
+      <a class="line-btn" href="https://line.me/R/ti/p/@448vieqh" target="_blank" rel="noopener">💚 加入官方 LINE，接收出貨通知</a>
+      <div class="line-sub">出貨、取貨時間都會用 LINE 通知您</div>
       <div class="contact-note">正式取貨時間將由我們透過 Line 與您聯繫確認，實際日期可能因訂單狀況微調，謝謝您的耐心等候 🥹<br>如有問題請聯繫 <span data-text="contact"></span></div>
     </div>
   </div>
