@@ -202,6 +202,7 @@
   .closed-head .msg { font-size: 16px; margin-top: 8px; }
   .line-btn { display:block; text-align:center; background:#06c755; color:#fff; text-decoration:none; font-weight:700; font-size:16px; padding:14px; border-radius:12px; margin:16px 0 6px; }
   .line-btn:active { background:#05a948; }
+  .line-step { margin-top:18px; font-size:14px; font-weight:700; color:var(--brand-dark); }
   .line-sub { font-size:13px; color:var(--muted); text-align:center; }
   .line-link { display:inline-block; margin-top:10px; font-size:13px; color:#06a64a; font-weight:600; text-decoration:none; }
 </style>
@@ -344,8 +345,9 @@
       <div class="result-line" id="resultPacks"></div>
       <div class="result-line" id="resultPrice"></div>
       <div class="result-line" id="resultShipping"></div>
-      <a class="line-btn" href="https://line.me/R/ti/p/@448vieqh" target="_blank" rel="noopener">💚 加入官方 LINE，接收出貨通知</a>
-      <div class="line-sub">出貨、取貨時間都會用 LINE 通知您</div>
+      <div class="line-step">最後一步 👇</div>
+      <a class="line-btn" id="lineOrderBtn" href="https://line.me/R/ti/p/@448vieqh" target="_blank" rel="noopener">📩 用 LINE 傳送訂單給我們</a>
+      <div class="line-sub">打開 LINE 後請按「傳送」，完成訂單確認 ✅<br>之後出貨、取貨時間都會用 LINE 通知您</div>
       <div class="contact-note">正式取貨時間將由我們透過 Line 與您聯繫確認，實際日期可能因訂單狀況微調，謝謝您的耐心等候 🥹<br>如有問題請聯繫 <span data-text="contact"></span></div>
     </div>
   </div>
@@ -559,10 +561,34 @@
     btn.disabled = true;
     btn.textContent = '送出中...';
 
+    lastOrder = data;
     api('submitOrder', data).then(onSubmitSuccess, onSubmitError);
   });
 
+  var lastOrder = null;
+
+  function buildLineOrderText(result, d) {
+    var lines = ['【欸冷水餃 訂單 #' + result.orderNo + '】'];
+    lines.push('姓名：' + d.name);
+    lines.push('電話：' + d.phone);
+    ITEMS.forEach(function (item) {
+      var q = d.quantities[item.id] || 0;
+      if (q > 0) lines.push(item.name + ' ×' + q + ' ' + String(item.unit || '').replace(/[（(].*$/, ''));
+    });
+    lines.push('總金額：NT$ ' + result.totalPrice.toLocaleString());
+    lines.push('匯款後五碼：' + d.last5);
+    if (d.pickupLocation) lines.push('取貨：台中自取－' + d.pickupLocation);
+    if (d.shippingAddress) lines.push('宅配地址：' + d.shippingAddress);
+    if (d.timeSlots && d.timeSlots.length) lines.push('方便時間：' + d.timeSlots.join('、'));
+    lines.push('預計取貨日：' + result.pickupDateText);
+    return lines.join('\n');
+  }
+
   function onSubmitSuccess(result) {
+    if (lastOrder) {
+      document.getElementById('lineOrderBtn').href =
+        'https://line.me/R/oaMessage/%40448vieqh/?' + encodeURIComponent(buildLineOrderText(result, lastOrder));
+    }
     document.getElementById('formSection').classList.add('hidden');
     document.getElementById('resultSection').classList.remove('hidden');
     document.getElementById('resultDate').textContent = result.pickupDateText;
