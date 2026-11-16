@@ -182,13 +182,16 @@ function dateKey(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(
 function dateText(d){ return (d.getMonth()+1)+'/'+d.getDate()+'（'+['日','一','二','三','四','五','六'][d.getDay()]+'）'; }
 const todayKey=()=>dateKey(new Date());
 
-function productionDay(n,startDate,skipWeekends){
+/** 第 n 個生產日：跳過休假日（off_days），skipWeekends 時也跳過六日 */
+function productionDay(n,startDate,skipWeekends,offDays){
   const d=new Date(startDate); let c=0;
-  while(true){
+  const off=offDays||new Set();
+  for(let guard=0;guard<2000;guard++){
     const wd=d.getDay();
-    if(!skipWeekends||(wd!==0&&wd!==6)){ c++; if(c===n) return new Date(d); }
+    if((!skipWeekends||(wd!==0&&wd!==6))&&!off.has(dateKey(d))){ c++; if(c===n) return new Date(d); }
     d.setDate(d.getDate()+1);
   }
+  return new Date(d);
 }
 
 /** 批次制生產計畫：同一口味 batch_size 包為一批 */
@@ -198,6 +201,7 @@ function buildPlan(S,groupId){
   const batchSize=Math.max(1,Number(prod.batch_size)||5);
   const batchesPerDay=Math.max(1,Math.floor(perDay/batchSize));
   const skipWk=prod.skip_weekends!==false;
+  const offDays=new Set(prod.off_days||[]);
   const group=S.groups.find(g=>g.id===groupId);
   if(!group) return {days:[],flavors:[],readyByOrder:{},batchSize,batchesPerDay,readyDate:()=>'—'};
   const start=parseDate(group.start_date||todayKey());
@@ -247,7 +251,7 @@ function buildPlan(S,groupId){
   const byDay={};
   batches.forEach(b=>{ (byDay[b.dayIndex]=byDay[b.dayIndex]||[]).push(b); });
   const days=Object.keys(byDay).map(Number).sort((a,b)=>a-b).map(di=>{
-    const d=productionDay(di,start,skipWk), k=dateKey(d);
+    const d=productionDay(di,start,skipWk,offDays), k=dateKey(d);
     const cnt={}; byDay[di].forEach(b=>cnt[b.itemId]=(cnt[b.itemId]||0)+1);
     const items=Object.keys(cnt).map(id=>({itemId:id,name:(itemById[id]||{}).name||id,
       batches:cnt[id],packs:cnt[id]*batchSize}));
@@ -264,7 +268,7 @@ function buildPlan(S,groupId){
   });
 
   return {days,flavors,readyByOrder,batchSize,batchesPerDay,
-    readyDate:di=>di?dateText(productionDay(di,start,skipWk)):'—'};
+    readyDate:di=>di?dateText(productionDay(di,start,skipWk,offDays)):'—'};
 }
 
 function calcShortage(S,plan,days){
@@ -518,7 +522,8 @@ function viewPlan(){
   const prod=S.settings.production||{};
   let h='<div class="banner info">🏭 <b>批次規則</b>：同一口味 <b>'+PLAN.batchSize+
     ' 包一批</b>，一批是最小製作單位。每天做 '+(prod.packs_per_day||10)+' 包 = <b>'+
-    PLAN.batchesPerDay+' 批</b>'+(prod.skip_weekends!==false?'，跳過週末':'')+'。<br>'+
+    PLAN.batchesPerDay+' 批</b>'+(prod.skip_weekends!==false?'，跳過週末':'，週末照常生產')+
+    ((prod.off_days||[]).filter(k=>k>=today).length?'，休假日 '+(prod.off_days||[]).filter(k=>k>=today).map(k=>dateText(parseDate(k))).join('、')+' 不生產':'')+'。<br>'+
     '某口味訂 7 包時會做 2 批共 10 包，多的 3 包自動進成品庫存。</div>';
 
   if(!PLAN.flavors.length) return h+'<div class="card"><div class="empty">'+
@@ -904,9 +909,24 @@ function viewGroups(){
       '<div style="font-size:20px;font-weight:700">'+(prod.batch_size||5)+' 包／批</div></div>'+
     '<div><div style="font-size:12px;color:var(--muted)">週末</div>'+
       '<div style="font-size:20px;font-weight:700">'+
-      (prod.skip_weekends!==false?'不生產':'照做')+'</div></div></div>'+
-    '<div style="font-size:12px;color:var(--muted);margin-top:10px">'+
-    '到 Supabase 的 settings 資料表修改 production 這一列。</div></div>';
+      (prod.skip_weekends!==false?'不生產':'照常生產')+'</div>'+
+      '<button class="btn sm ghost" style="margin-top:6px" onclick="toggleWeekends()">'+
+      (prod.skip_weekends!==false?'改成週末照常生產':'改成週末不生產')+'</button></div></div></div>';
+
+  const offs=(prod.off_days||[]).slice().sort();
+  const today=todayKey();
+  h+='<div class="card"><h2>🏖️ 休假日</h2>'+
+    '<div style="font-size:13px;color:var(--muted);margin-bottom:10px">'+
+    '休假日不排生產，訂單會自動順延到下一個工作日。客人下單時看到的預計取貨日、每晚 8 點的生產提醒也會跟著跳過。</div>'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">'+
+    '<input type="date" id="offDayInput" value="'+today+'" style="max-width:180px">'+
+    '<button class="btn sm" onclick="addOffDay()">＋ 新增休假日</button></div>';
+  if(!offs.length) h+='<div class="empty">目前沒有設定休假日</div>';
+  else h+='<div style="display:flex;gap:8px;flex-wrap:wrap">'+offs.map(k=>
+    '<span class="pill'+(k<today?' muted':'')+'" style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px">'+
+    dateText(parseDate(k))+(k<today?'（已過）':'')+
+    ' <a href="javascript:void(0)" onclick="removeOffDay(\''+k+'\')" style="text-decoration:none;color:inherit">✕</a></span>').join('')+'</div>';
+  h+='</div>';
   return h;
 }
 
@@ -1182,6 +1202,28 @@ async function doSaveGroup(id){
     }catch(e){ toast(e.message,true); }
   });
 }
+async function saveProduction(patch,msg){
+  try{ await api('saveProduction',patch); toast(msg); await reload(); }
+  catch(e){ toast(e.message,true); }
+}
+function toggleWeekends(){
+  const prod=S.settings.production||{};
+  const skip=prod.skip_weekends!==false;
+  saveProduction({skip_weekends:!skip}, skip?'已改成週末照常生產':'已改成週末不生產');
+}
+function addOffDay(){
+  const k=(document.getElementById('offDayInput')||{}).value;
+  if(!k){ toast('請選擇日期',true); return; }
+  const offs=(S.settings.production||{}).off_days||[];
+  if(offs.indexOf(k)>=0){ toast('這天已經是休假日了',true); return; }
+  saveProduction({off_days:offs.concat([k]).sort()}, '已新增休假日 '+dateText(parseDate(k)));
+}
+function removeOffDay(k){
+  const offs=(S.settings.production||{}).off_days||[];
+  if(!confirm('要取消 '+dateText(parseDate(k))+' 的休假嗎？')) return;
+  saveProduction({off_days:offs.filter(x=>x!==k)}, '已取消休假日 '+dateText(parseDate(k)));
+}
+
 async function closeGroup(id){
   const g=S.groups.filter(x=>x.id===id)[0];
   if(!confirm('確定要把「'+g.name+'」結團嗎？\n結團後這一團就不再接新訂單，業績與帳務可以繼續查看。')) return;
