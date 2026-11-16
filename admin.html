@@ -236,7 +236,28 @@ function buildPlan(S,groupId){
     const n=Math.ceil(demand[f]/batchSize);
     for(let i=0;i<n;i++) batches.push({itemId:f,batchNo:i});
   });
-  batches.forEach((b,i)=>{ b.dayIndex=Math.floor(i/batchesPerDay)+1; });
+  // 逐日排：每天的批數上限 = 特殊產能日設定（day_caps）或預設 batchesPerDay，
+  // 0 批或休假日就跳過，排不下的自動往後移
+  const caps=prod.day_caps||{};
+  const slots=[]; const cur=new Date(start);
+  const nextSlot=()=>{
+    for(let g=0;g<3000;g++){
+      const d=new Date(cur), k=dateKey(d), wd=d.getDay(); cur.setDate(cur.getDate()+1);
+      if(skipWk&&(wd===0||wd===6)) continue;
+      if(offDays.has(k)) continue;
+      const c=caps[k]!=null?Number(caps[k]):batchesPerDay;
+      if(!(c>0)) continue;
+      slots.push({date:d,cap:c,custom:caps[k]!=null}); return;
+    }
+    slots.push({date:new Date(cur),cap:batchesPerDay,custom:false});
+  };
+  let si=0, used=0;
+  batches.forEach(b=>{
+    if(!slots.length) nextSlot();
+    while(used>=slots[si].cap){ si++; used=0; if(si>=slots.length) nextSlot(); }
+    b.dayIndex=si+1; used++;
+  });
+  const slotDate=di=>slots[di-1]?slots[di-1].date:null;
 
   const batchDay={};
   batches.forEach(b=>{ batchDay[b.itemId+'#'+b.batchNo]=b.dayIndex; });
@@ -257,12 +278,12 @@ function buildPlan(S,groupId){
   const byDay={};
   batches.forEach(b=>{ (byDay[b.dayIndex]=byDay[b.dayIndex]||[]).push(b); });
   const days=Object.keys(byDay).map(Number).sort((a,b)=>a-b).map(di=>{
-    const d=productionDay(di,start,skipWk,offDays), k=dateKey(d);
+    const d=slotDate(di), k=dateKey(d), slot=slots[di-1];
     const cnt={}; byDay[di].forEach(b=>cnt[b.itemId]=(cnt[b.itemId]||0)+1);
     const items=Object.keys(cnt).map(id=>({itemId:id,name:(itemById[id]||{}).name||id,
       batches:cnt[id],packs:cnt[id]*batchSize}));
     const byItemPacks={}; items.forEach(i=>byItemPacks[i.itemId]=i.packs);
-    return {dayIndex:di,dateKey:k,dateText:dateText(d),items,
+    return {dayIndex:di,dateKey:k,dateText:dateText(d),items,cap:slot.cap,customCap:slot.custom,
       totalBatches:byDay[di].length,totalPacks:byDay[di].length*batchSize,
       materials:calcMaterials(byItemPacks,S.recipes),produced:producedByDate[k]||0};
   });
@@ -274,7 +295,7 @@ function buildPlan(S,groupId){
   });
 
   return {days,flavors,readyByOrder,batchSize,batchesPerDay,
-    readyDate:di=>di?dateText(productionDay(di,start,skipWk,offDays)):'—'};
+    readyDate:di=>di&&slotDate(di)?dateText(slotDate(di)):'—'};
 }
 
 function calcShortage(S,plan,days){
@@ -549,7 +570,7 @@ function viewPlan(){
      '<td class="num">'+(mt-dt>0?'+'+(mt-dt):'—')+'</td></tr></tfoot></table></div></div>';
 
   h+='<div class="card"><h2>🗓 每日製作排程</h2><div class="scroll"><table><thead><tr>'+
-     '<th>日期</th><th>製作內容</th><th class="num">批數</th><th class="num">包數</th><th></th>'+
+     '<th>日期</th><th>製作內容</th><th class="num">批數</th><th class="num">包數</th><th>當天產能</th><th></th>'+
      '</tr></thead><tbody>';
   PLAN.days.forEach(d=>{
     const done=d.produced>=d.totalPacks;
@@ -557,10 +578,13 @@ function viewPlan(){
       '<td><b>'+d.dateText+'</b>'+(d.dateKey===today?' <span class="pill ok">今天</span>':'')+'</td>'+
       '<td>'+d.items.map(i=>esc(i.name)+' <b>'+i.batches+'</b>批 ('+i.packs+'包)').join('<br>')+'</td>'+
       '<td class="num">'+d.totalBatches+'</td><td class="num">'+d.totalPacks+'</td>'+
+      '<td style="white-space:nowrap">'+capSelect(d.dateKey,d.cap,d.customCap)+'</td>'+
       '<td>'+(done?'<span class="pill ok">已完成</span>'
         :'<button class="btn sm ghost" onclick="openProduce(\''+d.dateKey+'\')">登記</button>')+'</td></tr>';
   });
-  h+='</tbody></table></div></div>';
+  h+='</tbody></table></div><div style="font-size:12px;color:var(--muted);margin-top:8px">'+
+     '某天做不了那麼多？把「當天產能」改小（例如 1 批），排不下的會自動往後移；改成 0 批就等於那天不生產。'+
+     '有特別設定的日子會標 ✏️，可以在「團次管理 → ⚙️ 生產設定」一起查看或恢復。</div></div>';
 
   h+='<div class="card"><h2>🥬 各日原料需求</h2><div class="scroll"><table><thead><tr><th>日期</th>';
   S.materials.forEach(m=>h+='<th class="num">'+esc(m.name)+'</th>');
@@ -922,6 +946,20 @@ function viewGroups(){
   const manual=prod.off_days||[], fromCal=prod.calendar_off_days||[];
   const offs=allOffDays(prod).filter(k=>k>=addDaysKey(todayKey(),-14));
   const today=todayKey();
+  const capKeys=Object.keys(prod.day_caps||{}).filter(k=>k>=addDaysKey(todayKey(),-14)).sort();
+  const defB=Math.max(1,Math.floor((prod.packs_per_day||10)/(prod.batch_size||5)));
+  h+='<div class="card"><h2>✏️ 特殊產能日<span class="sub">平常每天 '+defB+' 批，這幾天另外設定</span></h2>'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">'+
+    '<input type="date" id="capDayInput" value="'+todayKey()+'" style="max-width:180px">'+
+    '<select id="capDayBatches" style="max-width:110px">'+capOptions(defB,1)+'</select>'+
+    '<button class="btn sm" onclick="addCapDay()">＋ 設定</button></div>';
+  if(!capKeys.length) h+='<div class="empty">目前沒有特殊產能日，每天都照平常產能</div>';
+  else h+='<div style="display:flex;gap:8px;flex-wrap:wrap">'+capKeys.map(k=>
+    '<span class="pill" style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px">'+
+    dateText(parseDate(k))+'：'+prod.day_caps[k]+' 批'+
+    ' <a href="javascript:void(0)" title="恢復平常產能" onclick="setDayCap(\''+k+'\',null)" style="text-decoration:none;color:inherit">✕</a></span>').join('')+'</div>';
+  h+='</div>';
+
   h+='<div class="card"><h2>🏖️ 休假日</h2>'+
     '<div style="font-size:13px;color:var(--muted);margin-bottom:10px">'+
     '休假日不排生產，訂單會自動順延到下一個工作日。客人下單時看到的預計取貨日、每晚 8 點的生產提醒也會跟著跳過。<br>'+
@@ -1212,6 +1250,34 @@ async function doSaveGroup(id){
     }catch(e){ toast(e.message,true); }
   });
 }
+function defaultBatches(){
+  const prod=S.settings.production||{};
+  return Math.max(1,Math.floor((prod.packs_per_day||10)/(prod.batch_size||5)));
+}
+function capOptions(defB,selected){
+  let o='';
+  for(let n=0;n<=Math.max(defB+2,4);n++)
+    o+='<option value="'+n+'"'+(n===selected?' selected':'')+'>'+n+' 批'+(n===defB?'（平常）':'')+'</option>';
+  return o;
+}
+function capSelect(k,cap,custom){
+  return (custom?'✏️ ':'')+'<select style="width:auto;padding:4px 6px;font-size:13px" onchange="setDayCap(\''+k+'\',Number(this.value))">'+
+    capOptions(defaultBatches(),cap)+'</select>';
+}
+function setDayCap(k,n){
+  const caps=Object.assign({},(S.settings.production||{}).day_caps||{});
+  const defB=defaultBatches();
+  if(n==null||n===defB) delete caps[k]; else caps[k]=n;
+  const t=dateText(parseDate(k));
+  saveProduction({day_caps:caps}, n==null||n===defB?t+' 恢復平常產能':(n===0?t+' 改成不生產，排程已往後移':t+' 改成 '+n+' 批，排不下的已往後移'));
+}
+function addCapDay(){
+  const k=(document.getElementById('capDayInput')||{}).value;
+  const n=Number((document.getElementById('capDayBatches')||{}).value);
+  if(!k){ toast('請選擇日期',true); return; }
+  setDayCap(k,n);
+}
+
 async function saveProduction(patch,msg){
   try{ await api('saveProduction',patch); toast(msg); await reload(); }
   catch(e){ toast(e.message,true); }
