@@ -313,6 +313,14 @@ function calcShortage(S,plan,days){
   });
 }
 
+function groupOfTime(S,t){
+  const gs=S.groups.slice().sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||'')));
+  if(!gs.length) return null;
+  const ts=new Date(t).getTime();
+  let gid=gs[0].id;
+  gs.forEach(g=>{ if(g.created_at&&new Date(g.created_at).getTime()<=ts) gid=g.id; });
+  return gid;
+}
 function calcSummary(S,groupId){
   const orders=S.orders.filter(o=>o.group_id===groupId&&o.status!=='cancelled');
   const ids={}; orders.forEach(o=>ids[o.id]=true);
@@ -333,7 +341,10 @@ function calcSummary(S,groupId){
   const materialCost=rows.reduce((s,r)=>s+r.cost,0);
   const expenses=S.expenses.filter(e=>e.group_id===groupId);
   const otherCost=expenses.reduce((s,e)=>s+Number(e.amount||0),0);
-  const purchaseSpend=(S.movements||[]).filter(m=>m.kind==='purchase'&&m.target==='material')
+  // 進貨依日期分團：算到「建立時間在進貨之前、最晚建立的那一團」，
+  // 比第一團還早的進貨算第一團
+  const purchaseSpend=(S.movements||[]).filter(m=>m.kind==='purchase'&&m.target==='material'&&
+      (!m.created_at||groupOfTime(S,m.created_at)===groupId))
     .reduce((s,m)=>{
       if(m.amount!=null) return s+Number(m.amount);
       const mat=S.materials.find(x=>x.id===m.ref_id);
@@ -778,7 +789,7 @@ function viewFinance(){
       '<tr><td><b>淨利</b></td><td class="num" style="color:'+(net>=0?'var(--ok)':'var(--danger)')+
         '"><b>'+fmtMoney(net)+'</b></td></tr></tbody></table></div>'+
     '<div style="font-size:12px;color:var(--muted);margin-top:8px">'+
-    '「理論成本」只算這一團訂單用掉的量；「實際採購」是所有進貨支出，'+
+    '「理論成本」只算這一團訂單用掉的量；「實際採購」是這一團期間的進貨支出（依進貨日期分團），'+
     '包含還沒用完的庫存，所以兩個數字通常不一樣。</div></div></div>';
 
   const unpaid=sum.orders.filter(o=>!o.paid);
