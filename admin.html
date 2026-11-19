@@ -232,10 +232,25 @@ function buildPlan(S,groupId){
   });
 
   const flavorIds=Object.keys(demand).sort((a,b)=>firstSeq[a]-firstSeq[b]);
-  const batches=[];
-  flavorIds.forEach(f=>{
-    const n=Math.ceil(demand[f]/batchSize);
-    for(let i=0;i<n;i++) batches.push({itemId:f,batchNo:i});
+  // 依訂單順序排批次：#1 需要的先做，再來 #2…；
+  // 上一批多出來的包數先給後面的訂單用，不夠才再開新的一批
+  const batches=[], batchList={}, left={};
+  orders.forEach(o=>{
+    (linesByOrder[o.id]||[])
+      .filter(l=>itemById[l.item_id]&&itemById[l.item_id].counts_capacity&&l.qty>0)
+      .sort((a,b)=>(itemById[a.item_id].sort_order||0)-(itemById[b.item_id].sort_order||0))
+      .forEach(l=>{
+        const f=l.item_id; batchList[f]=batchList[f]||[];
+        while((left[f]||0)<l.qty){
+          const b={itemId:f,batchNo:batchList[f].length,orders:[]};
+          batches.push(b); batchList[f].push(b); left[f]=(left[f]||0)+batchSize;
+        }
+        const made=batchList[f].length*batchSize, end=made-left[f]+l.qty, startQ=end-l.qty;
+        for(let bi=Math.floor(startQ/batchSize);bi<=Math.ceil(end/batchSize)-1;bi++){
+          const b=batchList[f][bi]; if(b&&b.orders.indexOf(o.order_no)<0) b.orders.push(o.order_no);
+        }
+        left[f]-=l.qty;
+      });
   });
   // 逐日排：每天的批數上限 = 特殊產能日設定（day_caps）或預設 batchesPerDay，
   // 0 批或休假日就跳過，排不下的自動往後移
@@ -284,7 +299,9 @@ function buildPlan(S,groupId){
     const items=Object.keys(cnt).map(id=>({itemId:id,name:(itemById[id]||{}).name||id,
       batches:cnt[id],packs:cnt[id]*batchSize}));
     const byItemPacks={}; items.forEach(i=>byItemPacks[i.itemId]=i.packs);
-    return {dayIndex:di,dateKey:k,dateText:dateText(d),items,cap:slot.cap,customCap:slot.custom,
+    const orderNos=[]; byDay[di].forEach(b=>(b.orders||[]).forEach(n=>{ if(orderNos.indexOf(n)<0) orderNos.push(n); }));
+    orderNos.sort((a,b)=>a-b);
+    return {dayIndex:di,dateKey:k,dateText:dateText(d),items,orderNos,cap:slot.cap,customCap:slot.custom,
       totalBatches:byDay[di].length,totalPacks:byDay[di].length*batchSize,
       materials:calcMaterials(byItemPacks,S.recipes),produced:producedByDate[k]||0};
   });
@@ -565,7 +582,8 @@ function viewPlan(){
     ' 包一批</b>，一批是最小製作單位。每天做 '+(prod.packs_per_day||10)+' 包 = <b>'+
     PLAN.batchesPerDay+' 批</b>'+(prod.skip_weekends!==false?'，跳過週末':'，週末照常生產')+
     (allOffDays(prod).filter(k=>k>=today).length?'，休假日 '+allOffDays(prod).filter(k=>k>=today).map(k=>dateText(parseDate(k))).join('、')+' 不生產':'')+'。<br>'+
-    '某口味訂 7 包時會做 2 批共 10 包，多的 3 包自動進成品庫存。</div>';
+    '某口味訂 7 包時會做 2 批共 10 包，多的 3 包先給下一張訂單用。<br>'+
+    '📋 <b>排程依訂單順序</b>：#1 需要的口味先做，再來 #2、#3…，越早訂的越早可以出貨。</div>';
 
   if(!PLAN.flavors.length) return h+'<div class="card"><div class="empty">'+
     '這一團還沒有訂單，所以沒有生產計畫。</div></div>';
@@ -584,13 +602,14 @@ function viewPlan(){
      '<td class="num">'+(mt-dt>0?'+'+(mt-dt):'—')+'</td></tr></tfoot></table></div></div>';
 
   h+='<div class="card"><h2>🗓 每日製作排程</h2><div class="scroll"><table><thead><tr>'+
-     '<th>日期</th><th>製作內容</th><th class="num">批數</th><th class="num">包數</th><th>當天產能</th><th></th>'+
+     '<th>日期</th><th>製作內容</th><th>供應訂單</th><th class="num">批數</th><th class="num">包數</th><th>當天產能</th><th></th>'+
      '</tr></thead><tbody>';
   PLAN.days.forEach(d=>{
     const done=d.produced>=d.totalPacks;
     h+='<tr'+(d.dateKey<today||done?' class="dim"':'')+'>'+
       '<td><b>'+d.dateText+'</b>'+(d.dateKey===today?' <span class="pill ok">今天</span>':'')+'</td>'+
       '<td>'+d.items.map(i=>esc(i.name)+' <b>'+i.batches+'</b>批 ('+i.packs+'包)').join('<br>')+'</td>'+
+      '<td style="font-size:12px">'+(d.orderNos.length?d.orderNos.map(n=>'#'+n).join(' '):'—')+'</td>'+
       '<td class="num">'+d.totalBatches+'</td><td class="num">'+d.totalPacks+'</td>'+
       '<td style="white-space:nowrap">'+capSelect(d.dateKey,d.cap,d.customCap)+'</td>'+
       '<td>'+(done?'<span class="pill ok">已完成</span>'
