@@ -693,7 +693,8 @@ function viewOrders(){
       '<td style="font-size:12px;max-width:250px">'+content+'</td>'+
       '<td class="num">'+o.total_packs+'</td>'+
       '<td class="num">'+fmtMoney(o.total_amount)+'</td>'+
-      '<td style="font-size:12px">'+(di?PLAN.readyDate(di):'—')+'</td>'+
+      '<td style="font-size:12px">'+(di?PLAN.readyDate(di):'—')+
+        (o.note?'<div style="font-size:11px;color:var(--warn);margin-top:2px">📝 '+esc(o.note)+'</div>':'')+'</td>'+
       '<td><button class="btn sm '+(o.paid?'plain':'ghost')+'" onclick="togglePaid('+o.id+','+(!o.paid)+')">'+
         (o.paid?'✓ 已收':'未收')+'</button></td>'+
       '<td>'+sp+'</td>'+
