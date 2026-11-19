@@ -208,6 +208,7 @@ function buildPlan(S,groupId){
   const batchesPerDay=Math.max(1,Math.floor(perDay/batchSize));
   const skipWk=prod.skip_weekends!==false;
   const offDays=new Set((prod.off_days||[]).concat(prod.calendar_off_days||[]));
+  const pickupOffset=prod.pickup_offset_days!=null?Number(prod.pickup_offset_days):2;
   const group=S.groups.find(g=>g.id===groupId);
   if(!group) return {days:[],flavors:[],readyByOrder:{},batchSize,batchesPerDay,readyDate:()=>'—'};
   const start=parseDate(group.start_date||todayKey());
@@ -295,7 +296,9 @@ function buildPlan(S,groupId){
   });
 
   return {days,flavors,readyByOrder,batchSize,batchesPerDay,
-    readyDate:di=>di&&slotDate(di)?dateText(slotDate(di)):'—'};
+    // 可取貨日 = 製作日 + pickup_offset_days（預設 2 天）
+    readyDate:di=>{ const d=di&&slotDate(di); if(!d) return '—';
+      const p=new Date(d); p.setDate(p.getDate()+pickupOffset); return dateText(p); }};
 }
 
 function calcShortage(S,plan,days){
