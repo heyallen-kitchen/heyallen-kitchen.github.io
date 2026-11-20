@@ -341,6 +341,7 @@ function groupOfTime(S,t){
   gs.forEach(g=>{ if(g.created_at&&new Date(g.created_at).getTime()<=ts) gid=g.id; });
   return gid;
 }
+const INCOME_CAT='額外收入';
 function calcSummary(S,groupId){
   const orders=S.orders.filter(o=>o.group_id===groupId&&o.status!=='cancelled');
   const ids={}; orders.forEach(o=>ids[o.id]=true);
@@ -359,7 +360,11 @@ function calcSummary(S,groupId){
   const revenue=orders.reduce((s,o)=>s+Number(o.total_amount||0),0);
   const paidRevenue=orders.filter(o=>o.paid).reduce((s,o)=>s+Number(o.total_amount||0),0);
   const materialCost=rows.reduce((s,r)=>s+r.cost,0);
-  const expenses=S.expenses.filter(e=>e.group_id===groupId);
+  // 「額外收入」（沒有在訂單上的零售）跟支出存在同一張表，用類別區分
+  const groupEx=S.expenses.filter(e=>e.group_id===groupId);
+  const incomes=groupEx.filter(e=>e.category===INCOME_CAT);
+  const extraIncome=incomes.reduce((s,e)=>s+Number(e.amount||0),0);
+  const expenses=groupEx.filter(e=>e.category!==INCOME_CAT);
   const otherCost=expenses.reduce((s,e)=>s+Number(e.amount||0),0);
   // 進貨依日期分團：算到「建立時間在進貨之前、最晚建立的那一團」，
   // 比第一團還早的進貨算第一團
@@ -372,8 +377,8 @@ function calcSummary(S,groupId){
     },0);
 
   return {orders,rows,revenue,paidRevenue,unpaidRevenue:revenue-paidRevenue,
-    materialCost,otherCost,expenses,purchaseSpend,
-    grossProfit:revenue-materialCost-otherCost,
+    materialCost,otherCost,expenses,purchaseSpend,incomes,extraIncome,
+    grossProfit:revenue+extraIncome-materialCost-otherCost,
     totalPacks:orders.reduce((s,o)=>s+Number(o.total_packs||0),0),
     avgOrder:orders.length?revenue/orders.length:0};
 }
@@ -739,7 +744,7 @@ function viewSales(){
       '<div class="foot">水餃（不含醬料）</div></div>'+
     '<div class="stat"><div class="label">毛利</div>'+
       '<div class="value" style="color:'+(sum.grossProfit>=0?'var(--ok)':'var(--danger)')+'">'+
-      fmtMoney(sum.grossProfit)+'</div><div class="foot">毛利率 '+pct(sum.grossProfit,sum.revenue)+'%</div></div></div>';
+      fmtMoney(sum.grossProfit)+'</div><div class="foot">毛利率 '+pct(sum.grossProfit,sum.revenue+sum.extraIncome)+'%</div></div></div>';
 
   const maxAmt=Math.max.apply(null,sum.rows.map(r=>r.amount));
   h+='<div class="card"><h2>🏆 品項銷售排行</h2><div class="scroll"><table><thead><tr>'+
@@ -777,7 +782,7 @@ function viewSales(){
 function viewFinance(){
   const sum=calcSummary(S,GID);
   const g=S.groups.filter(x=>x.id===GID)[0]||{};
-  const net=sum.revenue-sum.purchaseSpend-sum.otherCost;
+  const net=sum.revenue+sum.extraIncome-sum.purchaseSpend-sum.otherCost;
 
   let h='<div class="grid c4" style="margin-bottom:14px">'+
     '<div class="stat"><div class="label">應收總額</div><div class="value">'+fmtMoney(sum.revenue)+'</div>'+
@@ -791,22 +796,24 @@ function viewFinance(){
       sum.orders.filter(o=>!o.paid).length+' 筆待收</div></div>'+
     '<div class="stat"><div class="label">淨利（實支）</div>'+
       '<div class="value" style="color:'+(net>=0?'var(--ok)':'var(--danger)')+'">'+fmtMoney(net)+'</div>'+
-      '<div class="foot">營收 − 實際採購 − 其他支出</div></div></div>';
+      '<div class="foot">營收 + 額外收入 − 實際採購 − 其他支出</div></div></div>';
 
   h+='<div class="card"><h2>💵 損益</h2><div class="scroll"><table><tbody>'+
     '<tr><td>營業收入</td><td class="num"><b>'+fmtMoney(sum.revenue)+'</b></td></tr>'+
     '<tr class="dim"><td style="padding-left:24px">已收款</td><td class="num">'+fmtMoney(sum.paidRevenue)+'</td></tr>'+
     '<tr class="dim"><td style="padding-left:24px">未收款</td><td class="num">'+fmtMoney(sum.unpaidRevenue)+'</td></tr>'+
+    '<tr><td>額外收入<span style="font-size:11px;color:var(--muted)">（非訂單售出）</span></td><td class="num">+'+fmtMoney(sum.extraIncome)+'</td></tr>'+
     '<tr><td>理論原料成本<span style="font-size:11px;color:var(--muted)">（依配方換算）</span></td>'+
       '<td class="num">−'+fmtMoney(sum.materialCost)+'</td></tr>'+
     '<tr><td>其他支出</td><td class="num">−'+fmtMoney(sum.otherCost)+'</td></tr>'+
     '<tr><td><b>毛利</b></td><td class="num" style="color:'+
       (sum.grossProfit>=0?'var(--ok)':'var(--danger)')+'"><b>'+fmtMoney(sum.grossProfit)+
-      '</b>（'+pct(sum.grossProfit,sum.revenue)+'%）</td></tr></tbody></table></div>'+
+      '</b>（'+pct(sum.grossProfit,sum.revenue+sum.extraIncome)+'%）</td></tr></tbody></table></div>'+
     '<div style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)">'+
     '<div style="font-size:13px;font-weight:600;margin-bottom:6px">實際現金流</div>'+
     '<div class="scroll"><table><tbody>'+
       '<tr><td>營業收入</td><td class="num">'+fmtMoney(sum.revenue)+'</td></tr>'+
+      '<tr><td>額外收入</td><td class="num">+'+fmtMoney(sum.extraIncome)+'</td></tr>'+
       '<tr><td>實際原料採購支出</td><td class="num">−'+fmtMoney(sum.purchaseSpend)+'</td></tr>'+
       '<tr><td>其他支出</td><td class="num">−'+fmtMoney(sum.otherCost)+'</td></tr>'+
       '<tr><td><b>淨利</b></td><td class="num" style="color:'+(net>=0?'var(--ok)':'var(--danger)')+
@@ -825,6 +832,21 @@ function viewFinance(){
       '<td>'+esc(o.phone||'')+'</td><td class="num">'+fmtMoney(o.total_amount)+'</td>'+
       '<td><button class="btn sm" onclick="togglePaid('+o.id+',true)">標記已收</button></td></tr>');
     h+='</tbody></table></div>';
+  }
+  h+='</div>';
+
+  h+='<div class="card"><h2>💰 額外收入<span class="sub">沒有在訂單上的售出</span><span class="right">'+
+     '<button class="btn sm" onclick="openExpense(true)">＋ 新增收入</button></span></h2>';
+  if(!sum.incomes.length) h+='<div class="empty">還沒有登記額外收入。</div>';
+  else{
+    h+='<div class="scroll"><table><thead><tr><th>日期</th><th>內容</th>'+
+       '<th class="num">金額</th><th></th></tr></thead><tbody>';
+    sum.incomes.slice().sort((a,b)=>String(b.spent_on).localeCompare(String(a.spent_on)))
+      .forEach(e=>h+='<tr><td>'+esc(String(e.spent_on).slice(0,10))+'</td>'+
+        '<td>'+esc(e.note||'')+'</td><td class="num">'+fmtMoney(e.amount)+'</td>'+
+        '<td><button class="btn sm plain" onclick="delExpense('+e.id+',true)">刪除</button></td></tr>');
+    h+='</tbody><tfoot><tr><td colspan="2">合計</td><td class="num">'+
+       fmtMoney(sum.extraIncome)+'</td><td></td></tr></tfoot></table></div>';
   }
   h+='</div>';
 
@@ -1342,7 +1364,18 @@ async function closeGroup(id){
   catch(e){ toast(e.message,true); }
 }
 
-function openExpense(){
+function openExpense(isIncome){
+  if(isIncome){
+    modal('<h3>新增額外收入</h3><div class="grid c2">'+
+      '<label class="field"><span>日期 *</span><input type="date" id="exDate" value="'+todayKey()+'"></label>'+
+      '<label class="field"><span>金額 *</span><input type="number" id="exAmt" min="0" step="1"></label></div>'+
+      '<input type="hidden" id="exCat" value="'+INCOME_CAT+'">'+
+      '<label class="field"><span>內容</span><input type="text" id="exNote" placeholder="例如：茴香水餃 3 包（現場售出）"></label>'+
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">賣掉的是庫存成品的話，記得到「庫存」扣掉包數。</div>'+
+      '<div class="row-end"><button class="btn ghost" onclick="closeModal()">取消</button>'+
+      '<button class="btn" id="doExBtn" onclick="doAddExpense()">新增</button></div>');
+    return;
+  }
   modal('<h3>新增支出</h3><div class="grid c2">'+
     '<label class="field"><span>日期 *</span><input type="date" id="exDate" value="'+todayKey()+'"></label>'+
     '<label class="field"><span>金額 *</span><input type="number" id="exAmt" min="0" step="1"></label></div>'+
@@ -1365,12 +1398,12 @@ async function doAddExpense(){
         spent_on:document.getElementById('exDate').value||todayKey(),
         category:category,amount:amount,
         note:document.getElementById('exNote').value.trim()||null}});
-      closeModal(); toast('支出已新增'); await reload();
+      closeModal(); toast(category===INCOME_CAT?'收入已新增':'支出已新增'); await reload();
     }catch(e){ toast(e.message,true); }
   });
 }
-async function delExpense(id){
-  if(!confirm('確定要刪除這筆支出嗎？')) return;
+async function delExpense(id,isIncome){
+  if(!confirm('確定要刪除這筆'+(isIncome?'收入':'支出')+'嗎？')) return;
   try{ await api('removeExpense',{id:id}); toast('已刪除'); await reload(); }
   catch(e){ toast(e.message,true); }
 }
